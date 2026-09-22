@@ -31,6 +31,7 @@ def audio():
         "outtmpl": output_template,
         "noplaylist": True,
         "cookiefile": cookies_path,
+        "extractor_args": {"youtube": {"player_client": ["mweb"]}},
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
