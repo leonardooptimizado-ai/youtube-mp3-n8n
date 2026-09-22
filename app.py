@@ -27,6 +27,7 @@ def audio():
         "format": "bestaudio/best",
         "outtmpl": output_template,
         "noplaylist": True,
+        "cookiefile": "/etc/secrets/cookies.txt",
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
