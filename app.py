@@ -1,5 +1,6 @@
 import os
 import tempfile
+import shutil
 from flask import Flask, request, send_file, jsonify
 import yt_dlp
 
@@ -21,13 +22,15 @@ def audio():
         return jsonify({"error": "Falta el campo url"}), 400
 
     temp_dir = tempfile.mkdtemp()
+    cookies_path = os.path.join(temp_dir, "cookies.txt")
+    shutil.copy("/etc/secrets/cookies.txt", cookies_path)
     output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
 
     options = {
         "format": "bestaudio/best",
         "outtmpl": output_template,
         "noplaylist": True,
-        "cookiefile": "/etc/secrets/cookies.txt",
+        "cookiefile": cookies_path,
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
