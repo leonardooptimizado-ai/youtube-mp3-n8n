@@ -105,7 +105,7 @@ def mezclar():
                 "-stream_loop", "-1",
                 "-i", musica_path,
                 "-filter_complex",
-                "[1:a]volume=0.10[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=2",
+                "[1:a]volume=0.06[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=2",
                 "-c:a", "libmp3lame",
                 "-b:a", "192k",
                 "-y",
