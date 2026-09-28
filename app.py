@@ -62,7 +62,7 @@ def mezclar():
 
     try:
         archivos = request.files.getlist("audios")
-        musica = request.files.get("musica")
+        musica_path = os.path.join(os.path.dirname(__file__), "A_Map_for_the_Quiet (1).mp3")
 
         if not archivos:
             return jsonify({"error": "No se recibieron audios"}), 400
@@ -93,27 +93,26 @@ def mezclar():
             voz_unida
         ], check=True)
 
-        if musica:
-            musica_path = os.path.join(temp_dir, "musica.mp3")
-            musica.save(musica_path)
+        
 
             salida = os.path.join(temp_dir, "episodio_final.mp3")
 
-            subprocess.run([
-                "ffmpeg",
-                "-i", voz_unida,
-                "-stream_loop", "-1",
-                "-i", musica_path,
-                "-filter_complex",
-                "[1:a]volume=0.06[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=2",
-                "-c:a", "libmp3lame",
-                "-b:a", "192k",
-                "-y",
-                salida
-            ], check=True)
+        subprocess.run([
+            "ffmpeg",
+            "-i", voz_unida,
+            "-stream_loop", "-1",
+            "-i", musica_path,
+            "-filter_complex",
+            "[1:a]volume=0.06[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=2",
+            "-c:a", "libmp3lame",
+            "-b:a", "192k",
+            "-y",
+            salida
+        ], check=True)
 
-        else:
-            salida = voz_unida
+        return send_file(
+
+        
 
         return send_file(
             salida,
