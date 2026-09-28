@@ -1,176 +1,96 @@
 import os
-import tempfile
 import shutil
 import subprocess
+import tempfile
 from flask import Flask, request, send_file, jsonify
-import yt_dlp
 
 app = Flask(__name__)
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MUSICA = os.path.join(BASE_DIR, "A_Map_for_the_Quiet (1).mp3")
+JOBS_DIR = os.path.join(tempfile.gettempdir(), "spreaker_jobs")
+os.makedirs(JOBS_DIR, exist_ok=True)
+
+
+def safe_job_id(value):
+    value = str(value or "")
+    limpio = "".join(c for c in value if c.isalnum() or c in ("-", "_"))
+    if not limpio:
+        raise ValueError("job_id inválido")
+    return limpio
 
 
 @app.get("/")
 def home():
     return jsonify({
         "status": "ok",
-        "service": "youtube-mp3-n8n"
+        "service": "spreaker-audio-mixer-v2"
     })
 
 
-@app.post("/audio")
-def audio():
-    data = request.get_json(silent=True) or {}
-    url = data.get("url")
-
-    if not url:
-        return jsonify({"error": "Falta el campo url"}), 400
-
-    temp_dir = tempfile.mkdtemp()
-    cookies_path = os.path.join(temp_dir, "cookies.txt")
-    shutil.copy("/etc/secrets/cookies.txt", cookies_path)
-    output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
-
-    options = {
-        "format": "bestaudio/best",
-        "outtmpl": output_template,
-        "noplaylist": True,
-        "cookiefile": cookies_path,
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["mweb"]
-            }
-        },
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }],
-    }
-
+@app.post("/parte")
+def recibir_parte():
     try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=True)
+        job_id = safe_job_id(request.form.get("job_id"))
+        parte = int(request.form.get("parte", "0"))
+        total = int(request.form.get("total", "0"))
+        audio = request.files.get("audio")
 
-        mp3_path = os.path.join(
-            temp_dir,
-            f"{info['id']}.mp3"
-        )
+        if not audio:
+            return jsonify({"error": "Falta el archivo audio"}), 400
 
-        return send_file(
-            mp3_path,
-            mimetype="audio/mpeg",
-            as_attachment=True,
-            download_name=f"{info['id']}.mp3"
-        )
+        if parte < 1 or total < 1 or parte > total:
+            return jsonify({"error": "parte/total inválidos"}), 400
+
+        job_dir = os.path.join(JOBS_DIR, job_id)
+        os.makedirs(job_dir, exist_ok=True)
+
+        ruta = os.path.join(job_dir, f"parte_{parte:04d}.mp3")
+        audio.save(ruta)
+
+        recibidas = len([
+            n for n in os.listdir(job_dir)
+            if n.startswith("parte_") and n.endswith(".mp3")
+        ])
+
+        return jsonify({
+            "status": "ok",
+            "job_id": job_id,
+            "parte": parte,
+            "total": total,
+            "recibidas": recibidas
+        })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.post("/mezclar")
-def mezclar():
-    temp_dir = tempfile.mkdtemp()
-
+@app.post("/finalizar")
+def finalizar():
     try:
-        # Recibe todas las partes de voz desde n8n
-        archivos = request.files.getlist("audios")
+        data = request.get_json(silent=True) or {}
+        job_id = safe_job_id(data.get("job_id"))
+        total = int(data.get("total", 0))
 
-        if not archivos:
-            return jsonify({
-                "error": "No se recibieron audios"
-            }), 400
+        if total < 1:
+            return jsonify({"error": "total inválido"}), 400
 
-        # Música permanente incluida en el repositorio
-        musica_path = os.path.join(
-            os.path.dirname(__file__),
-            "A_Map_for_the_Quiet (1).mp3"
-        )
+        if not os.path.exists(MUSICA):
+            return jsonify({"error": "No se encontró la música de fondo"}), 500
 
-        if not os.path.exists(musica_path):
-            return jsonify({
-                "error": "No se encontró la música de fondo"
-            }), 500
+        job_dir = os.path.join(JOBS_DIR, job_id)
 
-        # Guardar las partes de voz respetando su orden
-        rutas_audio = []
+        if not os.path.isdir(job_dir):
+            return jsonify({"error": "No existe el trabajo solicitado"}), 404
 
-        for i, archivo in enumerate(archivos):
-            ruta = os.path.join(
-                temp_dir,
-                f"parte_{i:03d}.mp3"
-            )
-            archivo.save(ruta)
-            rutas_audio.append(ruta)
+        rutas = [
+            os.path.join(job_dir, f"parte_{i:04d}.mp3")
+            for i in range(1, total + 1)
+        ]
 
-        # Crear lista para FFmpeg
-        lista_path = os.path.join(
-            temp_dir,
-            "lista.txt"
-        )
+        faltantes = [
+            i for i, ruta in enumerate(rutas, start=1)
+            if not os.path.exists(ruta)
+        ]
 
-        with open(lista_path, "w", encoding="utf-8") as f:
-            for ruta in rutas_audio:
-                f.write(f"file '{ruta}'\n")
-
-        # Unir todas las partes de voz
-        voz_unida = os.path.join(
-            temp_dir,
-            "voz_unida.mp3"
-        )
-
-        subprocess.run([
-            "ffmpeg",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", lista_path,
-            "-c:a", "libmp3lame",
-            "-b:a", "192k",
-            "-y",
-            voz_unida
-        ], check=True)
-
-        # Mezclar narración + música de fondo
-        salida = os.path.join(
-            temp_dir,
-            "episodio_final.mp3"
-        )
-
-        subprocess.run([
-            "ffmpeg",
-            "-i", voz_unida,
-            "-stream_loop", "-1",
-            "-i", musica_path,
-            "-filter_complex",
-            "[1:a]volume=0.06[m];"
-            "[0:a][m]amix=inputs=2:"
-            "duration=first:dropout_transition=2",
-            "-c:a", "libmp3lame",
-            "-b:a", "192k",
-            "-y",
-            salida
-        ], check=True)
-
-        return send_file(
-            salida,
-            mimetype="audio/mpeg",
-            as_attachment=True,
-            download_name="episodio_final.mp3"
-        )
-
-    except subprocess.CalledProcessError as e:
-        return jsonify({
-            "error": "FFmpeg no pudo procesar el audio",
-            "details": str(e)
-        }), 500
-
-    except Exception as e:
-        return jsonify({
-            "error": str(e)
-        }), 500
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
+        if faltantes:
